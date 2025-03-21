@@ -2,7 +2,8 @@ import pandas as pd
 import numpy as np
 import datetime as dt
 from datetime import datetime
-
+from statsmodels.tsa.stattools import adfuller
+import pywt
 
 
 def clean(df):
@@ -30,9 +31,14 @@ def convert_day_to_month(df, date_col="Date"):
     Convert the df recorded daily to df recorded monthly
     The rows extracted is the last trading day of that month and must be after 13th of that month
     """
+    # Ensure the date column is in datetime format
+    df[date_col] = pd.to_datetime(df[date_col])
+    
     df = df.sort_values(by=date_col)
+    
     # Group by month and get the last entry for each month
     monthly_df = df[df[date_col].dt.to_period('M') != df[date_col].shift(-1).dt.to_period('M')]
+    
     # Filter for days after the 13th
     monthly_df = monthly_df[monthly_df[date_col].dt.day > 13]
 
@@ -156,6 +162,9 @@ def cal_updays(df, window, column="Price"):
 
 
 def cal_log_return(df, column="Price"):
+    """
+    Log of returns after 1 days
+    """
     log_return = np.log(df[column] / df[column].shift(1))
 
     return log_return
@@ -167,12 +176,53 @@ def cal_volume_spike(df, window, volume_col="Vol."):
     return df[volume_col] / avg_volume
 
 
+def adf_test(series):
+    result = adfuller(series.dropna())  # ADF Test requires no NaN values
+    print("ADF Statistic:", result[0])
+    print("p-value:", result[1])
+    if result[1] > 0.05:
+        print("Data is non-stationary (p-value > 0.05).")
+    else:
+        print("Data is stationary (p-value < 0.05).")
 
 
+def cal_monthly_return(df, month_col="Month", price_col="Price"):
+    df = df.copy()
+    df[month_col] = pd.to_datetime(df[month_col], format='%Y-%m')
+
+    # Sort by month in case it's not ordered
+    df = df.sort_values(by=month_col)
+    monthly_returns = df[price_col].pct_change() * 100
+
+    return monthly_returns
 
 
-
-
+def wavelet_denoising(signal, wavelet="db4", level=1):
+    """
+    Perform wavelet denoising on a time series.
+    
+    Parameters:
+    - signal: 1D numpy array (time series data)
+    - wavelet: Wavelet type (default: 'db4' - Daubechies 4)
+    - level: Decomposition level (default: 1)
+    
+    Returns:
+    - Denoised signal as numpy array
+    """
+    # 1. Decompose signal using Discrete Wavelet Transform (DWT)
+    coeffs = pywt.wavedec(signal, wavelet, level=level)
+    
+    # 2. Estimate noise level using Median Absolute Deviation (MAD)
+    sigma = np.median(np.abs(coeffs[-1])) / 0.6745  # Robust noise estimation
+    
+    # 3. Compute threshold based on the noise estimate
+    threshold = sigma * np.sqrt(2 * np.log(len(signal)))
+    
+    # 4. Apply soft thresholding to remove noise
+    coeffs[1:] = [pywt.threshold(c, threshold, mode="soft") for c in coeffs[1:]]
+    
+    # 5. Reconstruct the denoised signal
+    return pywt.waverec(coeffs, wavelet)
 
 
 
